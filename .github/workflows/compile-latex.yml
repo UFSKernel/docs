@@ -10,6 +10,9 @@ on:
   # Permite que você execute este workflow manualmente na interface do GitHub
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 # Tarefas a serem executadas
 jobs:
   compile_latex:
