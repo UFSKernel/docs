@@ -1,0 +1,57 @@
+# Nome do workflow que aparecerá na aba "Actions" do GitHub
+name: Compilar Documentação LaTeX
+
+# Gatilhos: quando este workflow deve ser executado
+on:
+  # Executa em todo push para a branch 'main'
+  push:
+    branches:
+      - main
+  # Permite que você execute este workflow manualmente na interface do GitHub
+  workflow_dispatch:
+
+# Tarefas a serem executadas
+jobs:
+  compile_latex:
+    # Usa a versão mais recente do Ubuntu como ambiente
+    runs-on: ubuntu-latest
+
+    # Passos da tarefa
+    steps:
+      # 1. Baixa o código do seu repositório para o ambiente de execução
+      - name: Checkout do Repositório
+        uses: actions/checkout@v4
+
+      # 2. Compila o documento LaTeX usando uma Action da comunidade
+      #    Esta Action é fantástica pois usa 'latexmk', que automaticamente
+      #    executa pdflatex e biber o número correto de vezes.
+      - name: Compilar documento LaTeX com latexmk
+        uses: xu-cheng/latex-action@v3
+        with:
+          # O arquivo principal a ser compilado
+          root_file: main.tex
+          # O diretório onde o arquivo principal está
+          working_directory: latex/
+          # Usa o compilador latexmk, que resolve as dependências
+          compiler: latexmk
+          # Argumentos para o latexmk: use pdflatex e habilite funcionalidades extras
+          args: -pdf -shell-escape -file-line-error
+
+      # 3. Renomeia o PDF de saída para um nome mais amigável
+      - name: Renomear PDF
+        run: mv latex/main.pdf UFSKernel-Docs.pdf
+
+      # 4. Publica o PDF em uma Release "Latest"
+      #    Esta parte deleta a release "Latest" antiga e cria uma nova
+      #    com o PDF recém-compilado.
+      - name: Publicar PDF na Release
+        uses: softprops/action-gh-release@v2
+        with:
+          # Nome do arquivo que será anexado à release
+          files: UFSKernel-Docs.pdf
+          # Nome da tag e da release
+          tag_name: Latest-Documentation
+          # Deleta a release anterior com esta tag, se existir
+          prerelease: false
+          # Marca a release como a mais recente
+          make_latest: true
