@@ -1,0 +1,96 @@
+\documentclass[a4paper, 12pt]{report}
+\usepackage{listings}
+\usepackage[portuguese,brazil]{babel}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{xurl}
+\usepackage{lmodern}
+\usepackage{ae, enumerate}
+\usepackage{indentfirst}
+\usepackage[numbers,sort]{natbib}
+\usepackage{graphicx,epsfig}
+\usepackage{epstopdf}
+\usepackage{longtable}
+\usepackage[table]{xcolor}
+\usepackage{setspace,fancybox}
+\usepackage[paperwidth=210mm,paperheight=297mm,margin=20mm]{geometry}
+\usepackage{float}
+\usepackage{blindtext}
+\usepackage[colorlinks=true, urlcolor=blue, hidelinks]{hyperref}
+\usepackage{hyperref}
+\usepackage{ulem}
+\usepackage{cite}
+\usepackage{minted}
+\usepackage[backend=biber]{biblatex}
+\usepackage{caption}
+\usepackage{titlesec}
+
+\addbibresource{referencias.bib}
+
+
+\newcommand{\chapterauthor}[1]{
+  {\large\textbf{Autor(es):} \textit{#1}\par\vspace{20pt}}
+}
+
+\titleformat{\chapter}[display]
+  {\normalfont\Huge\bfseries}
+  {}
+  {0pt}
+  {}
+
+\titlespacing*{\chapter}
+  {0pt}
+  {-20pt}
+  {15pt}
+
+
+
+\definecolor{codegreen}{rgb}{0,0.6,0}
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{codepurple}{rgb}{0.58,0,0.82}
+\definecolor{backcolour}{rgb}{0.95,0.95,0.92}
+
+\lstdefinestyle{mystyle}{
+    backgroundcolor=\color{backcolour},   
+    commentstyle=\color{codegreen},
+    keywordstyle=\color{magenta},
+    numberstyle=\tiny\color{codegray},
+    stringstyle=\color{codepurple},
+    basicstyle=\ttfamily\footnotesize,
+    breakatwhitespace=false,         
+    breaklines=true,                 
+    captionpos=b,                    
+    keepspaces=true,                 
+    numbers=left,                    
+    numbersep=5pt,                  
+    showspaces=false,                
+    showstringspaces=false,
+    showtabs=false,                  
+    tabsize=2
+}
+
+\lstset{style=mystyle}
+
+
+
+\title{Kernel: o Núcleo do Sistema Operacional}
+\author{Comunidade UFSKernel}
+\date{\today}
+
+\begin{document}
+
+\input{capa.tex}
+
+\tableofcontents
+\newpage
+
+
+\include{capitulos/00_infraestrutura_base}
+% outros includes...
+
+
+\newpage 
+
+\printbibliography
+
+\end{document}

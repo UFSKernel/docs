@@ -1,0 +1,174 @@
+\chapter{Infraestrutura Base}
+
+\chapterauthor{Ti Ribeiro Silvério}
+
+%-------------------------------------------------------------------------------
+\section{Descrição}
+%-------------------------------------------------------------------------------
+% Descreva em alto nível o que este módulo faz e qual problema ele resolve
+% dentro do sistema operacional.
+%
+
+Esse é o kernel mínimo para possibilitar o desenvolvimento dos módulos subsequentes, um executável para o \verb|QEMU ARM| que coloca o processador para executar código \verb|C| compilado. O código aceito é extremamente limitado, contando apenas com funções simples de impressão de constantes na porta serial do \verb|QEMU|, que é redirecionada para a saída padrão da máquina hospedeira.
+
+%-------------------------------------------------------------------------------
+\section{Decisões de Arquitetura e Design}
+%-------------------------------------------------------------------------------
+% Justificar o porque de ter feito as coisas de uma certa maneira.
+%
+% Tópicos a cobrir:
+% - Quais alternativas foram consideradas?
+% - Por que a abordagem escolhida foi a melhor para este projeto?
+% - Quais são as limitações ou trade-offs da abordagem escolhida?
+%
+
+Para o desenvolvimento deste projeto, foi adotada uma filosofia de simplicidade máxima. Nele, foi feito o mínimo possível para que o processador ARM virtual executasse código \verb|C| compilado. Essa escolha foi feita para tornar o entendimento dos detalhes mais fácil, e possibilitar que funcionalidades extras sejam adicionadas à medida que forem necessárias.
+
+Um exemplo disso foi a preparação da pilha apontada pelo registrador \verb|sp|. Para solucionar esse problema, foi alocado um espaço de 16KB no binário final dentro do \textit{linker script}. Porém, por mais que tenha sido definido um rótulo que armazena a posição de memória do fim da pilha, não foi implementada uma maneira de tratar o estouro. Dessa forma, essas soluções serão implementadas em projetos futuros à medida que problemas aparecerão.
+
+%-------------------------------------------------------------------------------
+\section{Detalhes da Implementação}
+%-------------------------------------------------------------------------------
+% Descreva como a solução foi implementada, conectando o código
+% à teoria.
+%
+% Tópicos a cobrir:
+% - Principais estruturas de dados (structs) e suas funções.
+% - Algoritmos chave utilizados.
+% - Fluxo de execução das funções mais importantes.
+% - Inclua pequenos trechos de código com o pacote 'listings'.
+%
+
+Esse projeto consiste em 4 partes:
+
+\begin{enumerate}
+    \item O código de inicialização em Assembly ARM;
+    \item O \textit{linker script} que liga o código de inicialização ao código em \verb|C| compilado e prepara a pilha;
+    \item A função principal em \verb|C| para a qual o processador é desviado no código de inicialização;
+    \item A API driver do serial virtual do \verb|QEMU| que é usada como saída padrão, chamada na função principal.
+\end{enumerate}
+
+\subsection{Código de inicialização}
+
+O código em Assembly é o mais simples de todos. Primeiro, ele coloca o processador no modo supervisor e desliga interrupções, depois configura a pilha e desvia a execução para o código em \verb|C|.
+
+\begin{lstlisting}[caption=Configuração do modo do processador\, da pilha e chamada a kmain().]
+_start:
+    mrs r0, cpsr
+    bic r0, r0, #0x1f
+    orr r0, r0, #0xd3
+    msr cpsr, r0
+
+    ldr sp, =stack_top
+    bl kmain
+
+hang:
+    b hang
+\end{lstlisting}
+
+Nesse código, o registrador \verb|r0| é usado como registrador auxiliar para executar as mudanças. Assim, é escrito $11010011_2$ no útimo byte do registrador \textit{cpsr}, que armazena o estado atual do modo de operação do processador. Os dois bits mais a esquerda fazem o processador ignorar interrupções, enquanto os cinco mais a direita ligam o modo supervisor \cite{arm:armv7ar}.
+
+É importante desativar as interrupções pois ainda não definimos como tratá-las. Caso acontecesse qualquer interrupção durante a execução de um programa, sua execução seria desviada para uma posição de memória desconhecida e isso travaria o sistema.
+
+Também é essencial ligar o modo supervisor, pois o kernel deve ser capaz de ter controle total sobre o computador e sua memória, diferente dos demais processos que rodarão no modo usuário.
+
+Após isso, é configurada a pilha e desviado o contador de programa para o binário da função \verb|kmain()|. Caso haja um retorno, o processador entra em um laço infinito para impedir a execução de lixo de memória.
+
+A inicialização do \textit{stack pointer} é de extrema importância, pois chamadas de funções e passagem de parâmetros são compiladas para saltos e empilhamento de valores. Sem a existência da pilha, não seria possível chamar funções em \verb|C|.
+
+\subsection{\textit{Linker script}}
+
+Geralmente, quando usamos o \textit{linker} para terminar de gerar um executável, nem nos preocupamos com \textit{como} os binários serão ligados. No caso do kernel, esse não é o caso, e precisamos organizar as seções dos binários a serem ligados de tal forma que sejam executadas corretamente durante o \textit{boot}. Para resolver esse problema, temos que definir essas especificidades em uma receita para o \textit{linker}.
+
+Esse \textit{script}, assim como o código de inicialização, é bem simples.
+
+\begin{lstlisting}[caption=Script de geração do binário final.]
+ENTRY(_start)
+
+SECTIONS {
+    . = 0x40000000;
+
+    .text : {
+        KEEP(*(.text.startup))
+        *(.text)
+        *(.rodata)
+    }
+
+    .data : {
+        *(.data)
+    }
+
+    .bss : {
+        *(.bss)
+    }
+
+    stack_bottom = .;
+    . = . + 0x4000;
+    stack_top = .;
+
+    end = .;
+}
+\end{lstlisting}
+
+A primeira linha é responsável por apontar que o início lógico do executável deve ser \verb|_start|, o rótulo definido no código Assembly.
+
+O bloco da linha 3 é a definição da ordem dos binários a serem ligados no binário final. Nesse bloco, definimos o início da DRAM (endereço \verb|0x40000000| \cite{qemu:virtmachine}) e o que vai dentro de cada seção do executável: \verb|.text|, \verb|.data| e \verb|.bss|.
+
+A seção \verb|.text| é onde deve entrar o código fonte do programa, pois é uma seção com permissões de leitura e execução. Nela, colocamos o código de iniciação da subseção anterior, as seções \verb|.text| de cada binário a ser ligado e as seções \verb|.rodata| de cada um deles.
+
+Essa ultima seção (\verb|.rodata|) não armazena código, mas sim valores constantes, como cadeias de caracteres literais como em \texttt{print("Hello World")}. A constante \texttt{"Hello World"} não é uma variável, mas ainda precisa ser armazenada em algum lugar, nesse caso, \verb|.rodata|. Como \verb|.text| é uma seção de apenas leitura, é um bom lugar para armazenar esse tipo de dado.
+
+Similarmente, as seções \verb|.data| e \verb|.bss|, que contém as variáveis globais, são preenchidas com a junção das seções de mesmo nome dos arquivos objeto.
+
+Por fim, vem a definição das posições de inicio e fim da pilha e a alocação de seu espaço. O fim\footnote{Observação: a pilha ``cresce para baixo'', com o topo começando em um valor alto e decrescendo até um valor mais baixo. Decidi, por clareza, chamar de ``fim'' o ponto mais baixo, o limite de decrescimento, e de ``início'' o ponto mais alto, onde ela começa vazia.} da pilha é definido como o endereço logo após a seção \verb|.bss|, são pulados 16KB, e o início da pilha é endereço após esse salto. Dessa forma, reservamos um espaço para que a pilha possa funcionar normalmente.
+
+\subsection{Código em \texttt{C}}
+
+O código em linguagem de alto nível é dividido em três arquivos: \verb|include/serial.h|, \verb|kernel/serial.c| e \verb|kernel/main.c|.
+
+\begin{lstlisting}[language=C, caption=Implementação das funções driver serial.]
+#define UART0_DR ((volatile unsigned int *)0x09000000)
+
+void serial_putc(char c) { *UART0_DR = c; }
+
+void serial_puts(const char *s) {
+    while(*s) serial_putc(*s++);
+}
+
+void serial_init(void) {}
+\end{lstlisting}
+
+Esse é o código responsável por exibir dados na saída do serial. Inicialmente, é definido\footnote{É importante notar que esse endereço não é fixo, como dito na documentação \cite{qemu:virtmachine}. No \textbf{futuro}, devemos obter esse endereço através do \textit{Device Tree Blob}.} o endereço de memória mapeado para ``conversar'' com o dispositivo de saída. A porta serial do \verb|QEMU| funciona com E/S mapeada em memória, então o dispositivo, sempre que nota uma mudança em seu endereço mapeado, dá uma resposta.
+
+Como consequência disso, enviar dados ao serial é tão simples quanto alterar o conteúdo de uma posição de memória, sendo esta pré-definida com o \verb|#define| no topo do arquivo. Foi usado o tipo \verb|volatile| para evitar que o compilador faça otimizações indesejadas de leitura e escrita, uma vez que o conteúdo dessa posição pode mudar a qualquer momento.
+
+\begin{lstlisting}[language=C, caption=Função principal.]
+#include <serial.h>
+
+void kmain(void) {
+    serial_init();
+    serial_puts("Bem-vindo ao UFSKernel!\n");
+    serial_puts("Executando em modo ARM bare-metal no QEMU.\n");
+
+    return;
+}
+\end{lstlisting}
+
+Por fim, todo o programa é testado com a impressão de texto na porta serial. Como executamos o \verb|QEMU| com a \textit{flag} \verb|-nographic|, a saída da porta serial é redirecionada para a saída padrão do terminal que executou o \verb|QEMU|.
+
+%-------------------------------------------------------------------------------
+\section{Interface Pública (API)}
+%-------------------------------------------------------------------------------
+% Documente como outros módulos do kernel podem usar este módulo.
+% Essencialmente, é a documentação do arquivo .h correspondente.
+%
+% Para cada função pública:
+% - Nome da função.
+% - Descrição do que ela faz.
+% - Parâmetros (o que cada um significa).
+% - Valor de retorno (o que ela retorna e em que casos).
+%
+
+As únicas funções de API criadas nesse projeto foram \verb|serial_putc()| e \verb|serial_puts()|. Para utilizá-las, basta incluir a biblioteca \verb|serial.h| que já é biblioteca padrão do UFSKernel. Elas recebem, respectivamente, um \verb|char| e uma \verb|string| constante, e enviam esses dados para a porta serial.
+
+Essas funções serão essenciais para o desenvolvimento dos próximos projetos, tanto na execução de testes quanto durante a depuração do código.
