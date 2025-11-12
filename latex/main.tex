@@ -1,32 +1,33 @@
 \documentclass[a4paper, 12pt]{report}
-\usepackage{listings}
-\usepackage[portuguese,brazil]{babel}
-\usepackage[utf8]{inputenc}
-\usepackage[T1]{fontenc}
-\usepackage{xurl}
-\usepackage{lmodern}
-\usepackage{ae, enumerate}
-\usepackage{indentfirst}
-\usepackage[numbers,sort]{natbib}
-\usepackage{graphicx,epsfig}
-\usepackage{epstopdf}
-\usepackage{longtable}
-\usepackage[table]{xcolor}
-\usepackage{setspace,fancybox}
-\usepackage[paperwidth=210mm,paperheight=297mm,margin=20mm]{geometry}
-\usepackage{float}
-\usepackage{blindtext}
-\usepackage[colorlinks=true, urlcolor=blue, hidelinks]{hyperref}
-\usepackage{hyperref}
-\usepackage{ulem}
-\usepackage{cite}
-\usepackage{minted}
-\usepackage[backend=biber]{biblatex}
-\usepackage{caption}
-\usepackage{titlesec}
 
+% --- Configuração de Idioma e Tipografia ---
+\usepackage[T1]{fontenc}      % Codificação de fonte moderna (essencial para hifenação e PDF)
+\usepackage[utf8]{inputenc}   % Permite escrever acentos diretamente
+\usepackage[portuguese]{babel}% Suporte ao idioma português (hifenação, etc.)
+\usepackage{lmodern}          % Fonte Latin Modern (melhor que a padrão)
+\usepackage{indentfirst}      % Indenta o primeiro parágrafo de cada seção
+
+% --- Pacotes de Layout e Estilo ---
+\usepackage[margin=20mm]{geometry} % Define as margens do documento
+\usepackage{graphicx}             % Para incluir imagens (o padrão moderno)
+\usepackage{setspace}             % Para controle de espaçamento (\singlespacing, etc)
+\usepackage{fancybox}             % Para caixas estilosas como \ovalbox
+\usepackage[table]{xcolor}        % Para usar cores, especialmente em tabelas
+\usepackage{caption}              % Para customizar legendas de figuras e tabelas
+\usepackage{titlesec}             % Para customizar títulos de capítulos e seções
+
+% --- Pacotes para Conteúdo Específico ---
+\usepackage{listings}             % Para blocos de código simples
+\usepackage{longtable}            % Para tabelas que podem quebrar entre páginas
+
+% --- Configuração da Bibliografia (BibLaTeX) ---
+\usepackage[backend=biber, style=numeric, sorting=none]{biblatex}
 \addbibresource{referencias.bib}
 
+% --- Pacotes de Links e URLs ---
+\usepackage{xurl}                 % Permite quebras de linha em qualquer lugar de uma URL
+\usepackage{hyperref}             % Torna referências e URLs clicáveis
+\hypersetup{hidelinks}            % Remove as caixas coloridas dos links
 
 \newcommand{\chapterauthor}[1]{
   {\large\textbf{Autor(es):} \textit{#1}\par\vspace{20pt}}
