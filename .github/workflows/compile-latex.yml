@@ -42,7 +42,7 @@ jobs:
 
       # 3. Renomeia o PDF de saída para um nome mais amigável
       - name: Renomear PDF
-        run: mv latex/main.pdf UFSKernel-Docs.pdf
+        run: mv latex/main.pdf Documentacao_UFSKernel.pdf
 
       # 4. Publica o PDF em uma Release "Latest"
       #    Esta parte deleta a release "Latest" antiga e cria uma nova
