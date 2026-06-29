@@ -1,0 +1,523 @@
+\chapter{Processos, Troca de Contexto e Escalonamento}
+
+\chapterauthor{João Pedro Rizzo Sales, Samuel Romano Ribeiro, Guilherme Michelsen do Monte}
+
+
+\section{Descrição}
+
+
+Este capítulo documenta três módulos do UFSKernel:
+o módulo de \textbf{processos}, responsável por representar, criar e encerrar
+unidades de execução; o mecanismo de \textbf{troca de contexto}, que realiza
+a alternância segura entre modo usuário e modo kernel; e o \textbf{escalonador},
+que decide qual processo recebe a CPU e por quanto tempo. Juntos, esses módulos
+viabilizam a multiprogramação no kernel, conforme descrito em
+Silberschatz et al.~\cite{silberschatz2018} e Tanenbaum e Bos~\cite{tanenbaum2015}.
+
+Os arquivos que compõem esses módulos são: \texttt{process.h},
+\texttt{process.c}, \texttt{fork.c}, \texttt{exec.c}, \texttt{exit.c},
+\texttt{proc\_ll.c}, \texttt{svc\_entry.S}, \texttt{irq\_entry.S},
+\texttt{irq\_return.S}, \texttt{context\_switch.S}, \texttt{scheduler.h} e
+\texttt{process\_control\_block.c}.
+
+
+\section{Fundamentação Teórica}
+
+
+\subsection{Processo e PCB}
+
+Um processo é um programa em execução: uma entidade dinâmica que engloba
+o contador de programa, os registradores, a pilha e o espaço de endereços
+ocupado na memória~\cite{tanenbaum2015}. Para gerenciá-los, o kernel mantém
+um \textbf{Bloco de Controle de Processo} (PCB) por processo, concentrando
+tudo o que é necessário para suspendê-lo e retomá-lo como se nunca tivesse
+sido interrompido~\cite{silberschatz2018}.
+
+Durante seu ciclo de vida, um processo transita entre quatro estados. Os três
+canônicos, \textbf{Pronto}, \textbf{Em execução} e \textbf{Bloqueado}, são
+descritos em~\cite{tanenbaum2015}. O UFSKernel acrescenta um quarto,
+\textbf{Zumbi}: o processo encerrou, mas sua estrutura ainda não foi
+descartada, pois o processo pai deve registrar o encerramento do filho antes
+que os recursos sejam liberados~\cite{silberschatz2018}.
+
+\subsection{Trapframe, Contexto de Kernel e ABI ARM}
+
+Na ARMv7, o processador opera em modos de privilégio distintos. Toda transição
+de modo usuário para kernel, seja por chamada de sistema (\texttt{SVC}) ou por
+interrupção (\texttt{IRQ}), exige salvar o estado completo do processo para que
+a execução possa ser retomada. A estrutura que armazena
+esse estado é o \textbf{trapframe}~\cite{tanenbaum2015}.
+
+Para trocas de contexto internas ao kernel, quando o escalonador substitui
+um processo por outro sem sair do modo supervisor, apenas um subconjunto
+dos registradores precisa ser salvo. A ABI ARM (AAPCS)~\cite{arm2014} define
+dois grupos: registradores \emph{call-preserved} (r4--r11, SP e LR), que uma
+função deve restaurar antes de retornar, e registradores \emph{call-clobbered}
+(r0--r3, r12), que o chamador sabe que podem ser destruídos. Como o compilador
+já protege os call-clobbered em torno de qualquer chamada de função, o
+mecanismo de troca de contexto de kernel precisa salvar apenas os call-preserved.
+
+\subsection{Escalonamento: Round-Robin e MLFQ}
+
+O escalonador decide qual processo pronto recebe a CPU e por quanto tempo
+(o \textbf{quantum}), tipicamente acionado por um timer periódico~\cite{silberschatz2018}.
+O \textbf{Round-Robin} organiza os processos em fila circular com quantum fixo,
+mas trata igualmente processos interativos e CPU-bound~\cite{tanenbaum2015}.
+A \textbf{Multilevel Feedback Queue} (MLFQ) supera essa limitação: mantém
+múltiplas filas de prioridade com quanta crescentes, promovendo processos que
+usam pouco CPU (interativos) e rebaixando os que esgotam o quantum (CPU-bound),
+de modo que cada processo migra naturalmente para o nível compatível com seu
+comportamento real~\cite{silberschatz2018}.
+
+
+\section{Módulo de Processos}
+
+
+\subsection{Decisões de Arquitetura e Design}
+
+O módulo mantém duas estruturas distintas para o estado de execução de um
+processo. O \texttt{struct trapframe} armazena todos os registradores de
+propósito geral (r0--r12), os registradores banked do modo usuário
+(\texttt{sp\_usr}, \texttt{lr\_usr}), o contador de programa (\texttt{pc\_usr})
+e o registrador de estado (\texttt{cpsr\_usr}) — tudo o que o processo de
+usuário enxerga. O \texttt{struct context} armazena apenas os registradores
+call-preserved (r4--r11, SP e LR), suficientes para a troca de contexto
+dentro do kernel. Salvar r0--r3 e r12 no contexto de kernel seria redundante,
+pois o compilador já os trata como voláteis em torno de qualquer
+chamada~\cite{arm2014}.
+
+\subsubsection{Alocação estática de memória}
+
+Sem um alocador dinâmico disponível, toda a memória dos processos foi
+provisionada em tempo de compilação com três arrays globais em \texttt{fork.c}:
+
+\lstset{captionpos=t}
+\begin{lstlisting}[language=C, caption={Arrays de alocação estática em \texttt{fork.c}}]
+struct process structProcessos[MAX_PROCESS_COUNT];   // 64 PCBs
+char memProcessos[MAX_PROCESS_COUNT][SIZE_1MB];      // 64 x 1 MB
+char kstackProcessos[MAX_PROCESS_COUNT][SIZE_16KB];  // 64 x 16 KB
+\end{lstlisting}
+\lstset{captionpos=b}
+
+Isso impõe limites fixos: máximo de 64 processos simultâneos, 1~MB de
+memória e 16~KB de pilha de kernel por processo, independentemente da
+necessidade.
+
+\subsubsection{Simulação de executáveis com \texttt{struct arquivo}}
+
+Sem um sistema de arquivos disponível, a noção de executável foi simulada
+pela \texttt{struct arquivo}: um ponteiro de função (\texttt{start}) e um
+tamanho (\texttt{size}).
+
+\lstset{captionpos=t}
+\begin{lstlisting}[language=C, caption={Estrutura de simulação de arquivo em \texttt{process.h}}]
+struct arquivo {
+    void (*start)(void); // funcao que representa o programa
+    int size;            // tamanho do codigo a copiar
+};
+\end{lstlisting}
+\lstset{captionpos=b}
+
+Isso permite testar o ciclo completo fork--exec--exit sem depender de
+sistema de arquivos, mas implica que o código do processo coexiste na mesma
+imagem binária do kernel, sem separação real de espaço de endereços.
+
+\subsubsection{Gestão de PIDs e a estrutura \texttt{process\_block\_list}}
+
+PIDs são gerenciados por \texttt{create\_pid} e \texttt{free\_pid} sobre
+o array circular \texttt{used\_pids[MAX\_PROCESS\_COUNT]}. O PID~0 é
+reservado, convenção Unix que evita confundi-lo com um ponteiro
+nulo~\cite{silberschatz2018}. A estrutura \texttt{process\_block\_list},
+definida em \texttt{process.h}, prevê filas de processos bloqueados por
+\emph{sleep} ou por operações de E/S, mas não é utilizada na implementação
+atual, servindo como ponto de extensão planejado~\cite{tanenbaum2015}.
+
+\subsection{Detalhes da Implementação}
+
+\subsubsection{O PCB: \texttt{struct process}}
+
+\lstset{captionpos=t}
+\begin{lstlisting}[language=C, caption={Bloco de Controle de Processo em \texttt{process.h}}]
+struct process {
+    char* mem;              // inicio da regiao de memoria do processo
+    unsigned msize;         // tamanho da regiao de memoria
+    char* kstack;           // inicio da pilha de kernel
+    struct trapframe *tf;   // ponteiro para o trapframe (offset 12)
+    enum State state;       // RUNNING, READY, BLOCKED ou ZOMBIE
+    enum Block_Reason blocked_by;
+    pid_t pid;
+    process parent;
+    pid_list children_ids;
+    struct context context; // registradores call-preserved (troca de contexto)
+    unsigned priority;
+};
+\end{lstlisting}
+\lstset{captionpos=b}
+
+A ordem dos quatro primeiros campos é deliberada: \texttt{mem} (4~bytes),
+\texttt{msize} (4~bytes) e \texttt{kstack} (4~bytes) posicionam \texttt{tf}
+no offset~12 — valor codificado na constante \texttt{TRAPFRAME\_OFFSET = 12}
+usada pelo código assembly para acessá-lo diretamente.
+
+\subsubsection{Ciclo de vida: \texttt{first\_process}, \texttt{fork}, \texttt{exec} e \texttt{exit}}
+
+\texttt{first\_process} cria o processo inicial: aloca a estrutura por
+indexação estática no PID gerado, insere o processo no escalonador, define
+\texttt{current}, posiciona o trapframe no topo da kstack e chama
+\texttt{exec}. Ao final, chama \texttt{irq\_return} para entregar o controle
+ao modo usuário como se fosse um retorno de interrupção.
+
+\texttt{sys\_fork} copia byte a byte a memória e a kstack do pai para o
+filho, recalcula a posição do trapframe e altera os ponteiros de contexto
+do usuário (\texttt{pc\_usr}, \texttt{lr\_usr}, \texttt{sp\_usr}) para o
+espaço de endereços do filho:
+
+\lstset{captionpos=t}
+\begin{lstlisting}[language=C, caption={Translação de endereços no \texttt{sys\_fork}}]
+unsigned int pc_offset =
+    newprocess->parent->tf->pc_usr
+    - (unsigned int)newprocess->parent->mem;
+newprocess->tf->pc_usr =
+    (unsigned int)newprocess->mem + pc_offset;
+\end{lstlisting}
+\lstset{captionpos=b}
+
+O pai recebe o PID do filho em \texttt{r0}; o filho recebe zero, convenção
+Unix que permite distinguir os dois após o retorno~\cite{silberschatz2018}.
+O \texttt{context.lr} do filho aponta para \texttt{irq\_return}, garantindo
+que o primeiro \texttt{context\_switch} para ele desembarque corretamente
+no retorno ao modo usuário.
+
+\texttt{sys\_exec} copia o conteúdo do pseudo-arquivo para a memória do
+processo e prepara um trapframe novo. O endereço de entrada é calculado como:
+
+\lstset{captionpos=t}
+\begin{lstlisting}[language=C, caption={Cálculo do entry point em \texttt{sys\_exec}}]
+unsigned int entry_point =
+    (unsigned int) p->mem
+    + ((((unsigned int)arquivo->start) & ~1U) - 0x40000000);
+\end{lstlisting}
+\lstset{captionpos=b}
+
+A operação \texttt{\& \textasciitilde{}1U} zera o bit menos significativo
+do ponteiro de função — necessário porque em Thumb esse bit é 1 para sinalizar
+o modo de instrução, mas não faz parte do endereço real~\cite{arm2014}.
+O \texttt{cpsr\_usr} é configurado para \texttt{0x30}: modo USR com Thumb ativo.
+
+\texttt{sys\_exit} remove o processo do escalonador, libera o PID, marca o
+estado como \texttt{ZOMBIE} e invoca \texttt{pcb\_elect} para eleger
+imediatamente o próximo processo.
+
+
+\section{Mecanismo de Troca de Contexto}
+
+
+\subsection{Três mecanismos: entrada, retorno e troca}
+
+O mecanismo de troca de contexto é composto por três partes complementares:
+a \textbf{entrada} (\texttt{svc\_entry.S}, \texttt{irq\_entry.S}), que captura
+o estado do processo de usuário e o armazena em um trapframe na pilha de kernel;
+o \textbf{retorno} (\texttt{irq\_return.S}), que restaura esse estado e devolve
+o controle ao processo; e a \textbf{troca de contexto de kernel}
+(\texttt{context\_switch.S}), que salva e restaura apenas os registradores
+call-preserved para alternar entre processos enquanto permanece em modo supervisor.
+Mantê-los separados permite ao escalonador decidir, a cada interrupção, se
+retorna ao mesmo processo ou realiza uma troca.
+
+\subsection{Entrada via SVC e IRQ}
+
+Ao receber um SVC ou IRQ, o hardware ARMv7 salva automaticamente o CPSR em
+SPSR e o endereço de retorno em LR~\cite{arm2014}. O problema é que
+r0--r12 ainda contêm valores do processo interrompido, mas é preciso um
+registrador livre para operar. A solução é gravar r0 e r1 em posições
+negativas da pilha IRQ antes de reutilizá-los:
+
+\lstset{captionpos=t}
+\begin{lstlisting}[language={[x86masm]Assembler},
+                   caption={Salvamento temporário e troca de pilha em \texttt{irq\_entry.S}}]
+str r0, [sp, #-4]            @ salva r0 temporariamente na pilha IRQ
+str r1, [sp, #-8]            @ salva r1 temporariamente na pilha IRQ
+mov r1, sp                   @ guarda o SP_irq para restaurar r0 e r1 depois
+
+ldr r0, =current             @ carrega endereco da variavel global current
+ldr r0, [r0]                 @ r0 = ponteiro para o processo atual
+ldr sp, [r0, #TRAPFRAME_OFFSET] @ troca pilha IRQ pela kstack do processo
+
+ldr r0, [r1, #-4]            @ restaura r0
+ldr r1, [r1, #-8]            @ restaura r1
+\end{lstlisting}
+\lstset{captionpos=b}
+
+Em seguida, o trapframe é construído na kstack do processo:
+
+\lstset{captionpos=t}
+\begin{lstlisting}[language={[x86masm]Assembler},
+                   caption={Construção do trapframe na pilha de kernel}]
+sub sp, sp, #(17 * 4)        @ reserva espaco para os 17 campos do trapframe
+stmia sp, {r0-r12}           @ salva r0-r12
+add r12, sp, #(13*4)
+stmia r12, {sp, lr}^         @ salva sp_usr e lr_usr (^ acessa banked USR)
+str lr, [sp, #(15 * 4)]      @ salva PC (LR contem o end. de retorno do HW)
+mrs r12, spsr
+str r12, [sp, #(16 * 4)]     @ salva CPSR do processo (estava em SPSR)
+\end{lstlisting}
+\lstset{captionpos=b}
+
+O sufixo \texttt{\^} em \texttt{stmia r12, \{sp, lr\}\^} é essencial: ele
+instrui o processador a acessar os registradores banked do modo usuário
+(\texttt{SP\_usr} e \texttt{LR\_usr}), e não os do modo corrente. Sem ele,
+o estado do processo seria corrompido~\cite{arm2014}.
+
+\subsection{Retorno ao Modo Usuário}
+
+\texttt{irq\_return} realiza o processo inverso: lê \texttt{tf} do processo
+atual, restaura o CPSR do usuário no SPSR, carrega r0--r12, restaura
+\texttt{sp\_usr} e \texttt{lr\_usr} com o sufixo \texttt{\^} e executa:
+
+\lstset{captionpos=t}
+\begin{lstlisting}[language={[x86masm]Assembler},
+                   caption={Retorno ao modo usuário em \texttt{irq\_return.S}}]
+movs pc, lr
+\end{lstlisting}
+\lstset{captionpos=b}
+
+O sufixo \texttt{s} com o PC como destino em modo privilegiado copia
+automaticamente o SPSR para o CPSR~\cite{arm2014} — restaurando modo,
+flags e conjunto de instruções em uma única instrução.
+
+\subsection{Troca de Contexto de Kernel}
+
+\lstset{captionpos=t}
+\begin{lstlisting}[language={[x86masm]Assembler},
+                   caption={Troca de contexto de kernel em \texttt{context\_switch.S}}]
+context_switch:
+    cmp r0, #0
+    beq if_null              @ se nao ha processo saindo, apenas carrega
+
+    stmia r0!, {r4-r11}      @ salva registradores call-preserved
+    str sp, [r0], #4         @ salva SP
+    str lr, [r0]             @ salva LR (ponto de retorno quando reativado)
+
+if_null:
+    ldmia r1!, {r4-r11}      @ restaura registradores call-preserved
+    ldr sp, [r1], #4         @ restaura SP (agora na pilha do novo processo)
+    ldr lr, [r1]             @ restaura LR
+
+    bx lr                    @ retorna -- no contexto do processo entrante
+\end{lstlisting}
+\lstset{captionpos=b}
+
+O caso \texttt{r0 == NULL} cobre o boot, quando não há processo saindo.
+A propriedade central é que \texttt{bx lr} não retorna para quem chamou
+\texttt{context\_switch}, mas para o ponto em que o processo entrante havia
+sido suspenso. Para um processo recém-criado via \texttt{fork}, esse ponto é
+\texttt{irq\_return}, colocado ali por \texttt{sys\_fork}, fazendo-o
+ingressar diretamente no retorno ao modo usuário.
+
+\section{Escalonador}
+
+\subsection{Decisões de Arquitetura e Design}
+
+\subsubsection{MLFQ com 32 níveis e quanta crescentes}
+
+A ideia adotada é uma MLFQ simplificada com 32 níveis. O \texttt{pcb}
+é um array de \texttt{struct pcb\_entry} com quanta variando de 20 a 175
+em progressão aritmética de passo 5. Processos recém-criados entram no
+nível~0, maior prioridade, menor quantum, refletindo a heurística de que
+processos novos tendem a ser interativos~\cite{tanenbaum2015}. A progressão
+aritmética produz separação gradual entre os níveis sem saltos abruptos que
+pudessem causar \emph{starvation} nos níveis inferiores.
+
+\subsubsection{Margem de quantum e \texttt{list\_location}}
+
+A constante \texttt{SCHEDULER\_QUANTUM\_MARGIN = 5} define uma zona de
+tolerância: sem ela, pequenas variações no tempo acumulado causariam
+oscilações de promoção e rebaixamento. A variável global \texttt{list\_location}, atualizada por
+\texttt{pcb\_get\_node\_pid}, comunica o nível atual
+do processo para \texttt{pcb\_climb} e \texttt{pcb\_fall}. É uma escolha que evita parâmetros extras, mas cria acoplamento implícito:
+uma chamada intercalada a \texttt{pcb\_get\_node\_pid} com outro PID
+sobrescreveria \texttt{list\_location} e corromperia a movimentação. Em um
+sistema multiprocessado, isso seria uma fonte de \emph{race conditions}.
+
+\subsubsection{Alocação estática e \texttt{time\_elapsed}}
+
+Os nós da lista ligada são alocados estaticamente em
+\texttt{process\_blocks\_nodes[64]}, indexados por PID, impondo o mesmo
+limite de 64 processos. O comportamento do escalonador é
+funcional, mas o feedback de prioridade não reflete tempo real.
+
+\subsection{Detalhes da Implementação}
+
+\subsubsection{Estruturas de dados}
+
+\lstset{captionpos=t}
+\begin{lstlisting}[language=C, caption={Estruturas do escalonador em \texttt{scheduler.h}}]
+struct pcb_entry {
+    pll_node *process_list; // cabeca da lista ligada de processos
+    unsigned quantum;       // quantum deste nivel
+    short process_count;    // numero de processos no nivel
+    short next_process;     // indice circular do proximo a ser eleito
+};
+
+typedef struct process_node_ll {
+    struct process_node_ll *next;
+    process proc;
+} pll_node;
+\end{lstlisting}
+\lstset{captionpos=b}
+
+O campo \texttt{next\_process} implementa o revezamento circular dentro de
+cada nível: após eleger o processo de índice $i$, o campo avança para
+$(i+1) \bmod \texttt{process\_count}$.
+
+\subsubsection{O algoritmo de eleição: \texttt{pcb\_elect}}
+
+Invocada a cada \emph{tick} do timer via \texttt{timer\_callback},
+\texttt{pcb\_elect} executa em três fases:
+
+\textbf{Fase 1 — Acumular tempo.} Adiciona o retorno de \texttt{time\_elapsed}
+à variável \texttt{running\_for}.
+
+\textbf{Fase 2 — Avaliar o processo atual.} Se o processo ainda está dentro
+do quantum (com a margem), retorna sem preemptar:
+
+\lstset{captionpos=t}
+\begin{lstlisting}[language=C, caption={Avaliação do quantum em \texttt{pcb\_elect}}]
+if (current->state == RUNNING &&
+    running_for < (quantum + SCHEDULER_QUANTUM_MARGIN))
+    return; // ainda dentro do quantum, nao preempta
+
+// esgotou o quantum: aplica feedback de prioridade
+if (running_for <= quantum - SCHEDULER_QUANTUM_MARGIN)
+    pcb_climb(current_process_node); // usou pouco: promove
+else
+    pcb_fall(current_process_node);  // usou muito: rebaixa
+\end{lstlisting}
+\lstset{captionpos=b}
+
+\textbf{Fase 3 — Eleger o próximo.} Percorre os 32 níveis do mais alto para
+o mais baixo. Em cada nível, localiza o processo na posição
+\texttt{next\_process} e avança enquanto o processo não estiver
+\texttt{READY}. Ao encontrar um candidato, atualiza \texttt{current},
+marca-o como \texttt{RUNNING}, zera \texttt{running\_for} e chama
+\texttt{context\_switch}. O \texttt{goto end} permite abandonar o laço
+interno sem flags booleanas adicionais.
+
+\subsubsection{Promoção e rebaixamento}
+
+\texttt{pcb\_climb} e \texttt{pcb\_fall} movem o processo um nível acima
+ou abaixo, respectivamente, removendo o nó do nível atual e inserindo-o no
+adjacente. Os limites (nível~0 e nível~31) são respeitados: processos nos
+extremos não são movidos.
+
+
+\section{Interface Pública (API)}
+
+
+\subsection{Módulo de Processos (\texttt{process.h})}
+
+\begin{description}
+    \item[\texttt{pid\_t create\_pid()}] Aloca e retorna um PID disponível.
+    Retorna \texttt{MAX\_PROCESS\_COUNT} se todos estiverem em uso.
+
+    \item[\texttt{void free\_pid(pid\_t pid)}] Libera o PID para reutilização.
+
+    \item[\texttt{void first\_process(struct arquivo arquivo)}] Cria e lança
+    o processo inicial. Deve ser chamada uma única vez pelo \texttt{kmain}.
+    Não retorna.
+
+    \item[\texttt{int fork()}] Cria um processo filho. Retorna o PID do filho
+    ao pai e 0 ao filho (wrapper assembly em \texttt{syscall.S}).
+
+    \item[\texttt{void exec(struct arquivo* arquivo)}] Substitui a imagem do
+    processo atual. Não retorna ao chamador.
+
+    \item[\texttt{void exit()}] Encerra o processo atual. Não retorna.
+\end{description}
+
+\subsection{Módulo do Escalonador (\texttt{scheduler.h})}
+
+\begin{description}
+    \item[\texttt{void pcb\_elect(void)}] Seleciona e ativa o próximo
+    processo. Chamada automaticamente pelo timer; pode ser invocada
+    explicitamente por \texttt{sys\_exit}.
+
+    \item[\texttt{void pcb\_insert(unsigned priority\_level, pll\_node* proc)}]
+    Insere um processo no nível especificado. Nível~0 é o de maior prioridade.
+
+    \item[\texttt{void pcb\_remove(unsigned priority\_level, pll\_node* proc)}]
+    Remove um processo do nível especificado.
+
+    \item[\texttt{pll\_node* pcb\_get\_node\_pid(pid\_t pid)}] Localiza o nó
+    do processo pelo PID. Efeito colateral: atualiza \texttt{list\_location}.
+
+    \item[\texttt{void pcb\_climb(pll\_node* proc)}] Move o processo um nível
+    acima. Requer chamada prévia de \texttt{pcb\_get\_node\_pid} para o
+    mesmo processo.
+
+    \item[\texttt{void pcb\_fall(pll\_node* proc)}] Move o processo um nível
+    abaixo. Mesma precondição de \texttt{pcb\_climb}.
+
+    \item[\texttt{pll\_node* pll\_node\_new(process proc)}] Inicializa e
+    retorna o nó de lista ligada alocado estaticamente para o processo,
+    indexado pelo PID.
+
+    \item[\texttt{int proc\_is\_valid(process proc)}] Retorna verdadeiro se
+    o processo não é nulo e não está em estado \texttt{ZOMBIE}.
+\end{description}
+
+
+%-------------------------------------------------------------------------------
+\section{Testes e Verificação}
+%-------------------------------------------------------------------------------
+
+\subsection{Rotina de Teste}
+
+O \texttt{kmain} chama \texttt{first\_process(arqinicio)}, que executa
+\texttt{programainicio}:
+
+\begin{enumerate}
+    \item Imprime \texttt{"Processo rodando programa inicio"}.
+    \item Chama \texttt{fork}; o filho invoca \texttt{exec(\&arq1)},
+    carregando \texttt{programa1}.
+    \item O pai chama \texttt{fork} novamente; o segundo filho invoca
+    \texttt{exec(\&arq2)}, carregando \texttt{programa2}.
+    \item O pai chama \texttt{exit}.
+\end{enumerate}
+
+Os dois filhos entram em laço infinito, imprimindo suas mensagens com
+um delay de espera ativa. O escalonador alterna entre eles a cada
+\emph{tick} do timer.
+
+\subsection{Saída Esperada}
+
+\lstset{captionpos=t}
+\begin{lstlisting}[caption={Saída serial esperada no QEMU}]
+Bem-vindo ao UFSKernel!
+Executando em modo ARM bare-metal no QEMU.
+Preparando CPU (VBAR e Pilha IRQ)...
+Configurando GIC...
+Ligando interrupcoes...
+Ativando Timer...
+Kernel rodando na main...
+Processo rodando programa inicio
+Processo rodando programa 1
+Processo rodando programa 1
+Processo rodando programa 1
+Processo rodando programa 1
+Processo rodando programa 1
+>>> TICK DO TIMER <<<
+Processo rodando programa 2
+Processo rodando programa 2
+Processo rodando programa 2
+Processo rodando programa 2
+Processo rodando programa 2
+>>> TICK DO TIMER <<<
+Processo rodando programa 1
+...
+\end{lstlisting}
+\lstset{captionpos=b}
+
+A intercalação de \texttt{">>> TICK DO TIMER <<<"} com as impressões dos
+processos confirma que o escalonador está sendo acionado corretamente e
+alternando entre os processos a cada quantum.
