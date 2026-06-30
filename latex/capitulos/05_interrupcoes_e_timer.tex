@@ -1,0 +1,221 @@
+\chapter{Tratador de Interrupções}
+
+\chapterauthor{Renan Matulianes Arnaldo, Renan Suana Grothe Garcia, João Vitor Grisoto Kussaba}
+
+%-------------------------------------------------------------------------------
+\section{Descrição}
+%-------------------------------------------------------------------------------
+% Descreva em alto nível o que este módulo faz e qual problema ele resolve
+% dentro do sistema operacional.
+%
+O módulo de tratador de interrupções de um Sistema Operacional (SO) é responsável por receber as interrupções geradas pelo \emph{hardware} ou pelo \emph{software} e executar a respectiva rotina de tratamento para o tipo de interrupção recebida.
+
+As interrupções são sinais gerados pelo \emph{hardware} ou \emph{software} que indicam que algum evento precisa de atenção completa do processador para serem tratados corretamente. Essas interrupções podem ocorrer por meio de chamadas de sistema, instruções específicas, erros em tempo de execução, entre outras rotinas. Desse modo, o tratador de interupções é um módulo essencial do \emph{kernel} do SO, porque ele define as rotinas de tratamento para realizar cada uma das respostas apropriadas para os sinais de interrupção recebidos.
+
+
+%-------------------------------------------------------------------------------
+\section{Decisões de Arquitetura e Design}
+%-------------------------------------------------------------------------------
+% Justificar o porque de ter feito as coisas de uma certa maneira.
+%
+% Tópicos a cobrir:
+% - Quais alternativas foram consideradas?
+% - Por que a abordagem escolhida foi a melhor para este projeto?
+% - Quais são as limitações ou trade-offs da abordagem escolhida?
+%
+Para a implementação do tratador de interrupções, foi utilizada uma abordagem similar ao SO Minix, que é a utilização de uma tabela de vetores de bits que endereça fisicamente na memória onde está localizado a rotina espefífica de tratamento de interrupção, onde cada entrada dessa tabela possui um tipo de interrupção endereçada pelo \emph{offset} de bits enviados.
+
+Essa abordagem foi escolhida para que o acesso à rotina de tratamento de interrupções possa ser feito de forma constante, aumentando a eficiência em que o tratamento de interrupções ocorre e reduzindo o período em que o precessador mantêm-se ocupado com a rotina de tratamento.
+%-------------------------------------------------------------------------------
+\section{Detalhes da Implementação}
+%-------------------------------------------------------------------------------
+% Descreva como a solução foi implementada, conectando o código
+% à teoria.
+%
+% Tópicos a cobrir:
+% - Principais estruturas de dados (structs) e suas funções.
+% - Algoritmos chave utilizados.
+% - Fluxo de execução das funções mais importantes.
+% - Inclua pequenos trechos de código com o pacote 'listings'.
+%
+Seguindo a linha de pensamento abordada, foi utilizado um vetor de registro de funções para a implementação dos handlers de interrupções, que utiliza de ponteiros de função para acessar as rotinas de tratamento de interrupção. Além disso, é utilizada uma \emph{struct} denominada \emph{Interrupts Sevice Routine} (isr) responsável por realizar o resgistro das funções que farão o tratamento de interrupções pelos dispositivos.
+
+Para isso, são utilizadas algumas funções tem tem por objetivo a manipulação dos bits presentes nos registradores GIC (\emph{Generic Interrupt Controller}) da arquitetura ARM (arquitetura selecionada para a execução do projeto), que são registradores divididos por blocos lógicos responsáveis por gerenciar, priorizar e rotear interrupções. Para a etapa realizada neste projeto, os blocos mais utilizados para a configuração de interrupções no núcleo do sistema operacional são o bloco distribuidor \emph{Generic Interrupt Controller Distributor} (GICD) e o bloco de interface da CPU \emph{Generic Interrupt Controller CPU Interface} (GICC).
+
+Esses blocos são manipulados pelas funções \emph{gic\textunderscore{}enable\textunderscore{}interrupt()}, responsável por habilitar e registrar interrupções e modificar os registradores GIC\textunderscore{}ISENABLER para que permitam o envio da interrupção à CPU;
+\begin{lstlisting}
+void gic_enable_interrupt(uint32_t irq) {
+  if (irq >= MAX_INTERRUPTS)
+    return;
+
+  // cada registrador tem 32 bits
+  uint32_t reg_index = irq / 32;  // qual registrador
+  uint32_t bit_offset = irq % 32; // qual bit do registrador
+
+  GICD_ISENABLER[reg_index] |= (1 << bit_offset);
+}
+\end{lstlisting}
+e \emph{gic\textunderscore{}disable\textunderscore{}interrupt()}, análogo ao \emph{gic\textunderscore{}enable\textunderscore{}interrupt()}, só que desativa a interrupção selecionada e modifica os registradores GICD\textunderscore{}ICENABLER para sinalizar que a interrupção está desativada;
+\begin{lstlisting}
+void gic_disable_interrupt(uint32_t irq) {
+  if (irq >= MAX_INTERRUPTS)
+    return;
+
+  uint32_t reg_index = irq / 32;
+  uint32_t bit_offset = irq % 32;
+
+  // No ICENABLER escrever 1 desliga a interrupcao
+  GICD_ICENABLER[reg_index] = (1 << bit_offset);
+}
+\end{lstlisting}
+
+Desse modo, o fluxo principal de execução funciona da seguinte forma: Um gatilho de \emph{hardware} altera os bits de informação que são lidos pelo tratador como um tipo volatile uint32\textunderscore{}t (sendo o tipo uint32\textunderscore{}t um \emph{typedef} do tipo unsigned int da linguagem C), que indica ao compilador que o valor de bits pode ser mudado inesperadamente fora do controle ou da visibilidade da execução do tratador, e são levados aos registradores GIC;
+\begin{lstlisting}
+// Registradores
+#define GICD_CTLR (*(volatile uint32_t *)(GICD_BASE + 0x000))
+#define GICC_CTLR (*(volatile uint32_t *)(GICC_BASE + 0x000))
+#define GICC_PMR (*(volatile uint32_t *)(GICC_BASE + 0x004))
+#define GICC_IAR (*(volatile uint32_t *)(GICC_BASE + 0x00C))
+#define GICC_EOIR (*(volatile uint32_t *)(GICC_BASE + 0x010))
+\end{lstlisting}
+após isso, a informação é levada à tabela de vetores em linguagem de máquina, que desvia a execução do programa para ela;
+\begin{lstlisting}
+vector_table:			// offset |  interrupcao  |  modo de execucao 
+    b _start			// 0x00   |   Reset	  |  supervisor
+    b undefined_handler     	// 0x04   |   Undefined	  |  undefined
+    b svc_handler           	// 0x08   |   SVC  	  |  supervisor
+    b .                     	// 0x0C   |   Prefetch    |  abort
+    b data_abort_handler    	// 0x10   |   Data Abort  |  abort 
+    b .                     	// 0x14   |   Hyp Trap    |  hypervisor
+    b irq_handler           	// 0x18   |   IRQ         |  interrupt
+    b .                     	// 0x1C   |   FIQ         |  fast interrupt
+\end{lstlisting}
+depois, o endereço da função em linguagem de máquina \emph{irq\textunderscore{}handler} ajusta o resgistrador de retorno da arquitetora para o processo o qual estava em operação antes da interrupção ter sido gerada e empilha todos os registradores na pilha presente na memória do processador para salvar o contexto antes de ocorrer a troca para o núcleo do SO;
+\begin{lstlisting}
+irq_handler:
+    sub lr, lr, #4
+    
+    // Uma pseudo-instrucaoo que armazena os registradores de uso geral R0-R12 e o LR (Link Register)
+    // e ao mesmo tempo atualiza o valor do stack pointer (sp) para o topo da pilha apos o armazenamento
+    stmfd sp!, {r0-r12, lr}
+    
+    blx irq_dispatcher_c // Salta para a funcao em C
+    
+    // Uma pseudo-instrucao que restaura os registradores R0-R12 da pilha
+    // e ao mesmo tempo copia o valor antigo de LR direto para o program counter (PC)
+    ldmfd sp!, {r0-r12, pc}^
+\end{lstlisting}
+uma vez que o tratador de interrupções está em execução, o registrador GICC\textunderscore{}IAR é lido para que o tratador saiba que interrupção o chamou e se essa interrupção possui uma rotina de tratamento configurada para ela. Caso possua, o tratador faz o desvio para a rotina específica armazenada no vetor de ponteiros de funções \emph{interrupt\textunderscore{}handlers} e salva o identificador da rotina no resgistrador GICC\textunderscore{}EOIR, que indica que a interrupção já foi servida;
+\begin{lstlisting}
+void irq_dispatcher_c(void) {
+  uint32_t irq_id = GICC_IAR & 0x3FF; // le o identificador da interrupcao
+
+  // verifica se o indenficador nao e maior que o maximo de interrupcoes configuradas e se existe uma rotina de tratamento armazenada no vetor interrupt_handlers
+  if (irq_id < MAX_INTERRUPTS && interrupt_handlers[irq_id] != 0) {
+    interrupt_handlers[irq_id]();
+  }
+
+  GICC_EOIR = irq_id; // marca que a interrupcao ja foi servida
+}
+\end{lstlisting}
+por fim, o tratador realiza um retorno para o contexto do processo anterior a sua chamada para que ele possa continuar com a sua execução.
+%-------------------------------------------------------------------------------
+\section{Interface Pública (API)}
+%-------------------------------------------------------------------------------
+% Documente como outros módulos do kernel podem usar este módulo.
+% Essencialmente, é a documentação do arquivo .h correspondente.
+%
+% Para cada função pública:
+% - Nome da função.
+% - Descrição do que ela faz.
+% - Parâmetros (o que cada um significa).
+% - Valor de retorno (o que ela retorna e em que casos).
+%
+Para a utilização e configuração do tratador de forma que seja possível configurar e gerenciar interrupções, a biblioteca desenvolvida possui as seguintes funções:
+\begin{itemize}
+    \item int register\textunderscore{}interrupt\textunderscore{}handler(uint32\textunderscore{}t irq, isr\textunderscore{}t handler)
+
+Recebe o identificador de interrupção \emph{irq} e um ponteiro de função \emph{handler} que aponta para a rotina de tratamento da interrupção. Essa função salva o ponteiro de função no vetor \emph{interrupt\textunderscore{}handlers} no índice \emph{irq} caso o identificador recebido não ultrapasse o valor MAX\textunderscore{}INTERRUPTS. Retorna 0 caso tenha sido possível salvar o \emph{handler} senão -1.
+    \item void gic\textunderscore{}enable\textunderscore{}interrupt(uint\textunderscore{}t irq)
+
+Recebe o identificador de interrupção \emph{irq} e habilita o registrador GICD\textunderscore{}ISENABLER correspondente caso identificador não ultrapasse o valor MAX\textunderscore{}INTERRUPTS, habilitando-o para o tratamento de interrupção adequado.
+    \item void gic\textunderscore{}disable\textunderscore{}interrupt(uint\textunderscore{}t irq)
+
+Recebe o identificador de interrupção \emph{irq} e habilita o registrador GICD\textunderscore{}ICENABLER correspondente caso identificador não ultrapasse o valor MAX\textunderscore{}INTERRUPTS, desabilitando o tratamento de interrupção correspondente.
+    \item void gic\textunderscore{}config\textunderscore{}interrupt(uint32\textunderscore{}t irq, int edge\textunderscore{}triggered)
+Recebe o identificador de interrupção \emph{irq} e um sinal \emph{edge\textunderscore{}triggered} que indica se a interrupção é sensitiva à mudança de estado imediata (valor 1) ou somente após a estabilização do sinal recebido (valor 0) e configura o índex do identificador no registrador GICD\textunderscore{}ICFGR correspondente.
+\end{itemize}
+%-------------------------------------------------------------------------------
+\section{Testes e Verificação}
+%-------------------------------------------------------------------------------
+% Mostre como o funcionamento do módulo foi testado e validado.
+%
+% Tópicos a cobrir:
+% - Descreva a rotina de teste que foi adicionada à função kmain().
+% - Inclua a saída esperada (e obtida) na console serial do QEMU.
+% - Explique quais casos de borda foram testados.
+%
+Para o teste da funcionalidade, foi implementado o tratador para a interrupção de timer no método principal do projeto \emph{kmain()}, que tem por objetivo imprimir na tela uma mensagem de aviso que o processador sofreu uma interrupção de timer.
+
+Para isso, na função \emph{kmain()}, é realizado a inicialização do serial do projeto por meio da função \emph{serial\textunderscore{}init()}, depois a CPU é inicializda para receber as estruturas de tratamento de interrupção por meio da função \emph{setup\textunderscore{}core\textunderscore{}for\textunderscore{}irq}, depois de inicializadas as estruturas para o tratamento de interrupções, as interrupções de CPU são ativadas com a função \emph{enable\textunderscore{}cpu\textunderscore{}interrupts()} e, por fim, é chamada a função de inicialização e configuração do timer \emph{init\textunderscore{}timer}. Após essas configurações, um laço infinito é definido que imprime uma mensagem no console do QEMU indicando que o processo está operando normalmente no processador, com um segundo laço que serve apenas para espaçar o tempo de impressão de uma mensagem para outra, até sofrer uma interrupção de timer.
+\begin{lstlisting}
+void kmain(void) {
+  serial_init();
+  serial_puts("Bem-vindo ao UFSKernel!\n");
+  serial_puts("Executando em modo ARM bare-metal no QEMU.\n");
+
+  serial_puts("Preparando CPU (VBAR e Pilha IRQ)...\n");
+  setup_core_for_irq();
+
+  serial_puts("Configurando GIC...\n");
+  init_gic();
+
+  serial_puts("Ligando interrupcoes...\n");
+  enable_cpu_interrupts();
+
+  serial_puts("Ativando Timer...\n");
+  init_timer();
+
+  while (1) {
+    serial_puts("Kernel rodando na main...\n");
+    // Um delay apenas para nao flodar a tela
+    for (volatile int i = 0; i < 50000000; i++);
+  }
+}
+\end{lstlisting}
+
+O inicializador do timer \emph{init\textunderscore{}timer()} lê a frequência de ciclo do hardware, divide a frequência de ciclo pelo valor SYSTEM\textunderscore{}HZ, que marca a frequência das interrupções de timer, para indicar quantos ticks ele deve aguardar antes de realizar uma interrupção, inicializa o timer com o valor de ticks calculado, registra a interrupção pela função \emph{register\textunderscore{}interrupt\textunderscore{}handler()} e habilita a interrupção pela função \emph{gic\textunderscore{}enable\textunderscore{}interruption()}.
+\begin{lstlisting}
+void init_timer(void) {
+  uint32_t hardware_freq = read_cntfrq();
+  // quantos ticks formam um quantum no sistema
+  ticks_p_q = hardware_freq / SYSTEM_HZ;
+
+  // inicializa o timer com ticks_p_q
+  __asm__ volatile("mcr p15, 0, %0, c14, c2, 0" ::"r"(ticks_p_q));
+  uint32_t ctl = 1;
+  __asm__ volatile("mcr p15, 0, %0, c14, c2, 1" ::"r"(ctl));
+
+  // Toda interrupcao deve se registrar no despachante do GIC
+  if (!register_interrupt_handler(TIMER_IRQ, timer_callback))
+    serial_puts("Registrando timer no GIC...\n");
+  else
+    serial_puts("Erro ao registrar timer no GIC!\n");
+
+  // ativando a interrupcao apos registrar
+  gic_enable_interrupt(TIMER_IRQ);
+}
+\end{lstlisting}
+Para a rotina de testes da interrupção configurada, a interrupção de timer chama a função \emph{timer\textunderscore{}callback()}, que imprime uma pequena mensagem alertando que uma interrupção de timer ocorreu, exatamente como deveria, variando apenas caso o valor de SYSTEM\textunderscore{}HZ for configurado de uma forma diferente da já definida para o processo.
+\begin{lstlisting}
+// funcao que sera chamada quando a interrupcao for ativada
+static void timer_callback(void) {
+  serial_puts(">>> TICK DO TIMER <<<\n");
+
+  // recarrega o timer
+  __asm__ volatile("mcr p15, 0, %0, c14, c2, 0" ::"r"(ticks_p_q));
+
+  // e aqui que o codigo fara a chamada para o
+  // escalonador
+}
+\end{lstlisting}
