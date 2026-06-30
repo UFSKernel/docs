@@ -64,7 +64,7 @@ void gic_disable_interrupt(uint32_t irq) {
   uint32_t reg_index = irq / 32;
   uint32_t bit_offset = irq % 32;
 
-  // No ICENABLER escrever 1 desliga a interrupção
+  // No ICENABLER escrever 1 desliga a interrupcao
   GICD_ICENABLER[reg_index] = (1 << bit_offset);
 }
 \end{lstlisting}
@@ -95,25 +95,27 @@ depois, o endereço da função em linguagem de máquina \emph{irq\textunderscor
 irq_handler:
     sub lr, lr, #4
     
-    // Uma pseudo-instrução que armazena os registradores de uso geral R0-R12 e o LR (Link Register)
-    // e ao mesmo tempo atualiza o valor do stack pointer (sp) para o topo da pilha após o armazenamento stmfd sp!, {r®-r12, lr}
-    blx irq_dispatcher_c // Salta para a função em C
+    // Uma pseudo-instrucaoo que armazena os registradores de uso geral R0-R12 e o LR (Link Register)
+    // e ao mesmo tempo atualiza o valor do stack pointer (sp) para o topo da pilha apos o armazenamento
+    stmfd sp!, {r0-r12, lr}
     
-    // Uma pseudo-instrução que restaura os registradores R0-R12 da pilha
+    blx irq_dispatcher_c // Salta para a funcao em C
+    
+    // Uma pseudo-instrucao que restaura os registradores R0-R12 da pilha
     // e ao mesmo tempo copia o valor antigo de LR direto para o program counter (PC)
-    ldmfd sp!, {rø-r12, pc}^
+    ldmfd sp!, {r0-r12, pc}^
 \end{lstlisting}
 uma vez que o tratador de interrupções está em execução, o registrador GICC\textunderscore{}IAR é lido para que o tratador saiba que interrupção o chamou e se essa interrupção possui uma rotina de tratamento configurada para ela. Caso possua, o tratador faz o desvio para a rotina específica armazenada no vetor de ponteiros de funções \emph{interrupt\textunderscore{}handlers} e salva o identificador da rotina no resgistrador GICC\textunderscore{}EOIR, que indica que a interrupção já foi servida;
 \begin{lstlisting}
 void irq_dispatcher_c(void) {
-  uint32_t irq_id = GICC_IAR & 0x3FF; // lê o identificador da interrupção
+  uint32_t irq_id = GICC_IAR & 0x3FF; // le o identificador da interrupcao
 
-  // verifica se o indenficador não é maior que o máximo de interrupções configuradas e se existe uma rotina de tratamento armazenada no vetor interrupt_handlers
+  // verifica se o indenficador nao e maior que o maximo de interrupcoes configuradas e se existe uma rotina de tratamento armazenada no vetor interrupt_handlers
   if (irq_id < MAX_INTERRUPTS && interrupt_handlers[irq_id] != 0) {
     interrupt_handlers[irq_id]();
   }
 
-  GICC_EOIR = irq_id; // marca que a interrupção já foi servida
+  GICC_EOIR = irq_id; // marca que a interrupcao ja foi servida
 }
 \end{lstlisting}
 por fim, o tratador realiza um retorno para o contexto do processo anterior a sua chamada para que ele possa continuar com a sua execução.
@@ -176,7 +178,7 @@ void kmain(void) {
 
   while (1) {
     serial_puts("Kernel rodando na main...\n");
-    // Um delay apenas para não flodar a tela
+    // Um delay apenas para nao flodar a tela
     for (volatile int i = 0; i < 50000000; i++);
   }
 }
@@ -194,26 +196,26 @@ void init_timer(void) {
   uint32_t ctl = 1;
   __asm__ volatile("mcr p15, 0, %0, c14, c2, 1" ::"r"(ctl));
 
-  // Toda interrupção deve se registrar no despachante do GIC
+  // Toda interrupcao deve se registrar no despachante do GIC
   if (!register_interrupt_handler(TIMER_IRQ, timer_callback))
     serial_puts("Registrando timer no GIC...\n");
   else
     serial_puts("Erro ao registrar timer no GIC!\n");
 
-  // ativando a interrupção apos registrar
+  // ativando a interrupcao apos registrar
   gic_enable_interrupt(TIMER_IRQ);
 }
 \end{lstlisting}
 Para a rotina de testes da interrupção configurada, a interrupção de timer chama a função \emph{timer\textunderscore{}callback()}, que imprime uma pequena mensagem alertando que uma interrupção de timer ocorreu, exatamente como deveria, variando apenas caso o valor de SYSTEM\textunderscore{}HZ for configurado de uma forma diferente da já definida para o processo.
 \begin{lstlisting}
-// função que será chamada quando a interrupção for ativada
+// funcao que sera chamada quando a interrupcao for ativada
 static void timer_callback(void) {
   serial_puts(">>> TICK DO TIMER <<<\n");
 
   // recarrega o timer
   __asm__ volatile("mcr p15, 0, %0, c14, c2, 0" ::"r"(ticks_p_q));
 
-  // é aqui que o código fará a chamada para o
+  // e aqui que o codigo fara a chamada para o
   // escalonador
 }
 \end{lstlisting}
