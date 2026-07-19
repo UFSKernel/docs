@@ -19,6 +19,23 @@
 
 % --- Pacotes para Conteúdo Específico ---
 \usepackage{listings}             % Para blocos de código simples
+\lstset{
+    inputencoding=utf8,
+    extendedchars=true,
+    literate=
+        {á}{{\'a}}1 {ã}{{\~a}}1 {â}{{\^a}}1 {à}{{\`a}}1
+        {é}{{\'e}}1 {ê}{{\^e}}1
+        {í}{{\'i}}1
+        {ó}{{\'o}}1 {õ}{{\~o}}1 {ô}{{\^o}}1
+        {ú}{{\'u}}1
+        {ç}{{\c{c}}}1
+        {Á}{{\'A}}1 {Ã}{{\~A}}1 {Â}{{\^A}}1 {À}{{\`A}}1
+        {É}{{\'E}}1 {Ê}{{\^E}}1
+        {Í}{{\'I}}1
+        {Ó}{{\'O}}1 {Õ}{{\~O}}1 {Ô}{{\^O}}1
+        {Ú}{{\'U}}1
+        {Ç}{{\c{C}}}1
+}
 \usepackage{longtable}            % Para tabelas que podem quebrar entre páginas
 
 % --- Configuração da Bibliografia (BibLaTeX) ---
@@ -32,6 +49,10 @@
 
 \newcommand{\chapterauthor}[1]{
   {\large\textbf{Autor(es):} \textit{#1}\par\vspace{20pt}}
+}
+
+\newcommand{\chapterrev}[1]{
+  {\large\textbf{Revisão:} \textit{#1}\par\vspace{20pt}}
 }
 
 \titleformat{\chapter}[display]
@@ -71,6 +92,18 @@
     tabsize=2
 }
 
+
+\lstdefinelanguage{arm}{
+    morekeywords={sub, stmfd, blx, ldmfd, mov, add, cmp, b, bl, ldr, mcr, mrs, bic, orr, msr, bx},
+    sensitive=false,
+    morecomment=[l]{//}, % recognize // as comments
+    morecomment=[l]{@},  % recognize @ as comments
+    morestring=[b]",
+    basicstyle=\ttfamily\small,
+    keywordstyle=\color{blue}\bfseries,
+    commentstyle=\color{green!60!black},
+}
+
 \lstset{style=mystyle}
 
 
@@ -88,12 +121,11 @@
 
 
 \include{capitulos/00_infraestrutura_base}
-% outros includes...
-\include{capitulos/01_entrada_e_saida} 
-\include{capitulos/02_gerenciamento_de_memoria}  
-\include{capitulos/03_chamadas_de_sistema}
-\include{capitulos/04_processos_escalonador}
 \include{capitulos/05_interrupcoes_e_timer}
+\include{capitulos/01_entrada_e_saida} 
+\include{capitulos/03_chamadas_de_sistema}
+\include{capitulos/02_gerenciamento_de_memoria}  
+\include{capitulos/04_processos_escalonador}
 % <-- ADICIONE SUA LINHA AQUI
 
 \newpage 
@@ -101,3 +133,4 @@
 \printbibliography
 
 \end{document}
+

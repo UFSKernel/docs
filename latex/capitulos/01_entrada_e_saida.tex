@@ -1,6 +1,9 @@
-\chapter{ENTRADA E SAÍDA DE TECLADO}
+\chapter{Entrada e Saída}
 
 \chapterauthor{Matteo Cileneo Savan, Pedro Achilles Domingues Alves Pereira e Raul Yoshiyuki Komai}
+
+
+\chapterrev{Ti Ribeiro Silvério}
 
 %-------------------------------------------------------------------------------
 \section{Descrição}
@@ -8,7 +11,7 @@
 
 
 
-Uma parte fundamental em um sistema é o de entrada e saída de dados. Sem ele, o sistema ficaria incomunicável. Assim, esta seção se destinará a detalhar a implementação da entrada de dados do teclado e saída visual.
+Uma parte fundamental em um sistema é a de entrada e saída de dados. Sem ela, o sistema ficaria incomunicável. Assim, esta seção se destina a detalhar a implementação da entrada de dados pelo teclado e saída visual.
 
 Qualquer unidade de E/S contém dois componentes:
 \begin{itemize}
@@ -16,7 +19,7 @@ Qualquer unidade de E/S contém dois componentes:
     \item Eletrônico: a controladora de dispositivo. Ela tem alguns registradores para a comunicação com a CPU do computador e, a partir desses registradores, o sistema operacional será capaz de enviar e receber dados do dispositivo, ler status, entre outras coisas.
 \end{itemize}
 
-O foco da implementação deste módulo é lidar com a controladora dos dispositivos a partir da criação de um driver sem espera ocupada (com o uso de interrupções, no lugar), gerenciar os buffers de E/S de dados e implementar uma interatividade com o usuário por meio de uma shell para a execução de comandos simples.
+O foco da implementação deste módulo é lidar com a controladora dos dispositivos a partir da criação de um driver sem espera ocupada (com o uso de interrupções), gerenciar os buffers de E/S de dados e implementar uma interatividade com o usuário por meio de uma shell para a execução de comandos simples.
 
 No QEMU, a controladora simulada é a PrimeCell UART (PL011), e ela servirá para a comunicação serial entre os dispositivos de E/S e o \textit{kernel}. Importante ressaltar que, aqui, não ocorre comunicação direta entre o teclado e o UART ou entre o UART e o monitor, essa operação tem intermédio do próprio QEMU \cite{ekasiswanto:qemu-uart}. A plataforma oferece uma interface para uso da controladora em baixo nível.
 
@@ -48,7 +51,7 @@ Para a implementação foram utilizados:
 
 \begin{itemize}
     
-    \item \texttt{kstudio.c}: é uma camada de abstração sobre as funcionalidades da UART. Assim, é um conjunto de funções para lidar com entrada e saída a partir das funções de \texttt{uart.c}. No projeto, é usada principalmente no interpretador de comandos \texttt{shell.c};
+    \item \texttt{kstdio.c}: é uma camada de abstração sobre as funcionalidades da UART. Assim, é um conjunto de funções para lidar com entrada e saída a partir das funções de \texttt{uart.c}. No projeto, é usada principalmente no interpretador de comandos \texttt{shell.c};
     
     \item \texttt{main.c}: realiza-se a inicialização geral do sistema;
     
@@ -211,7 +214,7 @@ No arquivo kstdio.c tem-se uma abstração de funcionalidades da UART voltada pa
 
 \begin{itemize}
 
-    \item \texttt{void ksdtio\_init(void)}\\
+    \item \texttt{void kstdio\_init(void)}\\
     Inicializa o subsistema básico de entrada e saída do kernel através da inicialização da UART.
 
     \item \texttt{void kputs(const char *str)}\\
@@ -287,5 +290,6 @@ Para testagem, foram usados comandos:
 \end{itemize}
 
 Durante os testes, foi possível confirmar o funcionamento correto da comunicação serial, do buffer circular de recepção, da leitura de caracteres, do \textit{parser} de comandos e da conversão de valores numéricos para representação textual.
+
 
 
