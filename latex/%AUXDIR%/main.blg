@@ -1,0 +1,17 @@
+[0] Config.pm:328> INFO - This is Biber 2.21
+[0] Config.pm:331> INFO - Logfile is '%AUXDIR%/main.blg'
+[38] biber-darwin:342> INFO - === seg ago 31, 2026, 22:51:53
+[47] Biber.pm:421> INFO - Reading '%AUXDIR%/main.bcf'
+[84] Biber.pm:1002> INFO - Found 8 citekeys in bib section 0
+[92] Biber.pm:4487> INFO - Processing section 0
+[98] Biber.pm:4678> INFO - Looking for bibtex file 'referencias.bib' for section 0
+[99] bibtex.pm:1713> INFO - LaTeX decoding ...
+[102] bibtex.pm:1519> INFO - Found BibTeX data source 'referencias.bib'
+[142] UCollate.pm:68> INFO - Overriding locale 'pt-PT' defaults 'variable = shifted' with 'variable = non-ignorable'
+[142] UCollate.pm:68> INFO - Overriding locale 'pt-PT' defaults 'normalization = NFD' with 'normalization = prenormalized'
+[142] Biber.pm:4307> INFO - Sorting list 'none/global//global/global/global' of type 'entry' with template 'none' and locale 'pt-PT'
+[142] Biber.pm:4313> INFO - No sort tailoring available for locale 'pt-PT'
+[144] bbl.pm:676> INFO - Writing '%AUXDIR%/main.bbl' with encoding 'UTF-8'
+[146] bbl.pm:779> INFO - Output to %AUXDIR%/main.bbl
+[146] Biber.pm:132> WARN - I didn't find a database entry for 'arm2014' (section 0)
+[146] Biber.pm:134> INFO - WARNINGS: 1
