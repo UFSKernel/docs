@@ -1,0 +1,263 @@
+\chapter{Interface de rede}
+
+\chapterauthor{Felipe Pregnolatto Melo, Raul Yoshiyuki Koma, Vicente Pinto Tomás Junior}
+
+%-------------------------------------------------------------------------------
+\section{Descrição}
+%-------------------------------------------------------------------------------
+% Descreva em alto nível o que este módulo faz e qual problema ele resolve
+% dentro do sistema operacional.
+%
+
+A placa de rede é a responsável pelo envio e recebimento de pacotes para a rede em baixo nível. Por ser um componente externo, é responsabilidade do sistema operacional fazer o acordo e comunicação em memória com o \emph{driver}.
+
+A interface de rede então é o sistema que faz essa comunicação, estabelece os acordos, define as posições de memória onde os pacotes chegam e faz o tratamento da leitura e envio dos pacotes para a internet.
+
+
+
+%-------------------------------------------------------------------------------
+\section{Decisões de Arquitetura e Design}
+%-------------------------------------------------------------------------------
+% Justificar o porque de ter feito as coisas de uma certa maneira.
+%
+% Tópicos a cobrir:
+% - Quais alternativas foram consideradas?
+% - Por que a abordagem escolhida foi a melhor para este projeto?
+% - Quais são as limitações ou trade-offs da abordagem escolhida?
+%
+
+Como a placa de rede é um driver externo, em um kernel real ele é uma peça de \emph{hardware} adicional à maquina. Por sorte o QEMU ARM contém uma série de disposítivos simulados que podem ser adicionados e configurados, chamados série Virtio (\emph{Virtual I/O Device}), sendo um deles um disposítivo de rede.
+
+O disposítivo escolhido foi o disposítivo de rede versão 1.0 da série de disposítivos Virtio de rede, uma versão já legada, o motivo dessa escolha foi simplesmente por ser a única versão que era conectada pelo QEMU, o mótivo disso ocorrer não foi descoberto pelo grupo.
+
+As limitações então são responsabilidade do sistema esperar o disposítivo versão 1.0, não podendo ser iniciado caso a versão seja diferente. \cite{virtio:networkdevice}
+
+
+
+%-------------------------------------------------------------------------------
+\section{Detalhes da Implementação}
+%-------------------------------------------------------------------------------
+% Descreva como a solução foi implementada, conectando o código
+% à teoria.
+%
+% Tópicos a cobrir:
+% - Principais estruturas de dados (structs) e suas funções.
+% - Algoritmos chave utilizados.
+% - Fluxo de execução das funções mais importantes.
+% - Inclua pequenos trechos de código com o pacote 'listings'.
+%
+
+\subsection{Arquivos}
+
+A implementação foi dividida nos seguintes arquivos:
+
+\begin{description}
+    \item[\texttt{virtio.h}] Cabeçalho que define a struct de um socket
+    \begin{lstlisting}[language=C]
+        struct socket {
+            uint32_t em_uso;
+            uint16_t porta_local;
+            uint8_t rx_buffer[4096];
+            uint32_t rx_tamanho;
+            struct process *processo_bloqueado;
+        };
+    \end{lstlisting}
+    Além de definir as funções da API.
+
+    \item[\texttt{protocol\_headers.h}] Cabeçalho que define várias structs dos cabeçalhos de diversos protocolos para um pacote da internet, como IPV4, ARP e UDP.
+
+    \item[\texttt{main.c}] Onde é executado a função de inicialização da placa de rede.
+
+    \item[\texttt{virtio.c}] Arquivo principal de implementação e as funções internas e externas .
+\end{description}
+
+\subsection{Fluxo de execução}
+
+    Antes de explicar o fluxo, é necessário explicar a estrutura do que são virtqueues, o modelo de dados usado pela placa de rede.
+
+\subsubsection{VirtQueues}
+
+\begin{lstlisting}[language=C]
+struct virtq_desc {
+    uint64_t addr;
+    uint32_t len;
+    uint16_t flags;
+    uint16_t next;
+} __attribute__((packed));
+
+struct virtq_avail {
+    uint16_t flags;
+    uint16_t idx;
+    uint16_t ring[];
+} __attribute__((packed));
+
+struct virtq_used_elem {
+    uint32_t id;
+    uint32_t len;
+} __attribute__((packed));
+
+struct virtq_used {
+    uint16_t flags;
+    uint16_t idx;
+    struct virtq_used_elem ring[];
+} __attribute__((packed));
+
+
+    /* Estrutura para o kernel controlar o estado da fila */
+struct virtqueue_info {
+    struct virtq_desc *desc;
+    struct virtq_avail *avail;
+    struct virtq_used *used;
+    uint16_t last_used_idx; // Controla até onde o kernel já leu
+    uint16_t avail_idx;     // Controla onde colocar o próximo buffer 
+};
+
+// Filas globais (0 = RX, 1 = TX)
+struct virtqueue_info virtqueues[2];
+\end{lstlisting}
+
+Virtqueues tem 3 partes importantes para entender sua estrutura
+
+A parte descritora, que descreve os dados nos buffers, como seu endereço, seu tamanho e seu tipo (se é envio ou recebimento).
+
+O anel de pacotes avaliaveis, onde o kernel escreve os pacotes que devem ser enviados pela placa de rede quando tiver oportunidade, tendo estrutura de uma fila circular.
+
+O anel usado, onde o kernel escreve os pacotes recebidos pela placa, tendo estrutura de uma fila circular.
+
+
+\subsubsection{Inicialização}
+
+A função \texttt{virtio\_net\_init()} é responsável pela inicialização e ela segue o seguinte fluxo:
+
+\begin{enumerate}
+\item Marca o endereço da placa como \texttt{0x0A003e00}
+\item Verifica se o endereço corresponde a um dispositivo virtio e se o dispositivo é um de rede da versão 1.0.
+\item Começa a registrar no registrador de status, setando como 0.
+\item Marca o bit 1 para dizer que o kernel reconhece o dispositivo
+\item Marca o bit 2 para dizer que o kernel sabe como utilizar o dispositivo e dá tamanho da página em bytes.
+\item Configura as virtqueues, inicializando a primeira fila como recebimento e a segunda como de envio.
+\item Marca o bit 3 para dizer que o kernel terminou de configurar o dispositivo e ele esta pronto para uso.
+\item Habilita a função de interrupção.
+\item Inicializa os sockets com hashtable.
+\item Envia um ARP para avisar o QEMU o endereço da placa.
+\end{enumerate}
+
+\subsubsection{Tratador de interrupção}
+
+Uma interrupção na rede significa que um pacote chegou de fora, então a interrupção deve ser enviada para que em algum momento o pacote seja lido e entregue aos processos. Mesmo com a versão atual não tratando interrupções, a função ainda é usada como padrão de leitura.
+
+\begin{lstlisting}[language=C]
+while(rx->last_used_idx != rx->used->idx){
+
+    ... faz a leitura dos pacotes baseado em portas
+
+uint16_t novo_avail_idx = rx->avail_idx % VIRTQ_SIZE;
+rx->avail->ring[novo_avail_idx] = desc_id;
+rx->avail_idx++;
+                
+rx->last_used_idx++;
+}
+\end{lstlisting}
+
+A função de interrupção então quando chamada, percorre toda a lista circular do anel de espaço usados da virqueue e se o pacote é um udp, envia os dados para o processo que abriu o socket do destino.
+
+\subsubsection{Envio de pacotes}
+
+
+sys\_recv(int32\_t port, void *buffer\_user, uint32\_t tam\_max)
+Utiliza o método de pooling para chamar o tratamento de interrupção, então lê os dados do socket e retorna a quantidade de dados retornados enquanto escreve no buffer do usuario.
+
+A função de envio de pacotes não está corretamente implementada.
+
+
+
+
+
+%-------------------------------------------------------------------------------
+\section{Interface Pública (API)}
+%-------------------------------------------------------------------------------
+% Documente como outros módulos do kernel podem usar este módulo.
+% Essencialmente, é a documentação do arquivo .h correspondente.
+%
+% Para cada função pública:
+% - Nome da função.
+% - Descrição do que ela faz.
+% - Parâmetros (o que cada um significa).
+% - Valor de retorno (o que ela retorna e em que casos).
+%
+
+\subsubsection{virtio\_net\_init}
+
+\textbf{Descrição:}
+Inicializa a o dispositivo de rede.
+
+\textbf{Parâmetros:}
+Nenhum
+
+\textbf{Retorno:}
+Retorna 1 caso a inicialização tenha sucessido, -1 caso tenha falho e 2 caso a placa tenha sido configurada mas tenha ocorrido alguma falha na configuração da função de interrupção.
+
+
+\subsubsection{socket}
+
+\textbf{Descrição:}
+Abre um socket com a porta indicada. As portas disponíveis no sistema são as 5000 até 5015 e a 5555.
+
+\textbf{Parâmetros:}
+\begin{itemize}
+\item \texttt{porta}: Número da porta.
+\end{itemize}
+
+\textbf{Retorno:}
+Retorna o ID do socket para uso nas outras funções, retorna -1 caso não tenha aberto nenhum.
+
+\subsubsection{recv}
+
+\textbf{Descrição:}
+Lê os pacotes recebidos pelo kernel.
+
+\textbf{Parâmetros:}
+\begin{itemize}
+\item \texttt{port}: Número da porta de recebimento.
+\item \texttt{buffer\_user}: Endereço do buffer onde a função vai escrever os conteudos dos pacotes enviados.
+\item \texttt{tam\_max}: Tamanho do máximo de bytes que serão escritos no buffer.
+\end{itemize}
+
+\textbf{Retorno:}
+Retorna a quantidade de bytes lidos.
+
+
+\subsubsection{send}
+Não implementado.
+
+
+
+%-------------------------------------------------------------------------------
+\section{Testes e Verificação}
+%-------------------------------------------------------------------------------
+% Mostre como o funcionamento do módulo foi testado e validado.
+%
+% Tópicos a cobrir:
+% - Descreva a rotina de teste que foi adicionada à função kmain().
+% - Inclua a saída esperada (e obtida) na console serial do QEMU.
+% - Explique quais casos de borda foram testados.
+%
+No Kmain(), é executado apenas a função de inicialização do dispositivo de rede. É colocado em uma variável o valor de retorno e printa a mensagem "Placa de rede iniciada." caso o retorno seja 1. O resultado obtido quando a inicialização é feita pelo make run-net é essa.
+
+O resto dos testes não são feitos na aba de programas do shell, onde existem os programas \texttt{rede1} e \texttt{rede2}. \texttt{rede2} não está funcionando por utilizar do send.
+O programa \texttt{rede1} pede uma porta de argumento e retorna o payload do pacote recebido nessa porta se existe algo. Essa funcionalidade pode ser testada dando um netcat udp para o endereço local e porta requisitada antes de dar o comando rede1. Como por exemplo:
+
+
+% Nao sei como colocar o simbolo do |
+- echo "Teste de Rede UFSKernel" {pipe} nc -u -w1 127.0.0.1 5555
+
+Ao fazer esse echo antes de dar o comando pela primeira vez, o retorno é sempre correto e ele retorna o texto do echo completo.
+
+Os pacotes podem ser visualizados após a execução do kernel também com o \texttt{qemu\-trafego.pcap} que sempre é gerado. Ele pode ser lido com o programa tshark pelo terminal com o comando:
+
+- tshark -r qemu-trafego.pcap 
+
+Essa leitura sempre retorna os pacotes recebidos e o ARP inicial corretamente.
+
+
+
